@@ -1,0 +1,167 @@
+﻿<#
+    .SYNOPSIS
+    This script will set high CPU and Memory alerts on WINDOWS and LINUX machines.
+    
+    .DESCRIPTION
+    - The script will trigger the ARM template stored in the storage account and pass the array in order to deploy the
+      high CPU and Memory alerts on Windows and linux VM's for RIM DEV2.
+     
+    .NOTES
+    Author:     Prakhar Sharma
+    
+    .INPUTS
+    $WorkspaceName = Name of the workspace in which the machine has been on-boarded.
+    $SubscriptionName = Name of the subscription in which the Workspace is created.
+    $ActionGroupName = Name of the action group to which the alert email needs to be triggered.
+
+    .OUTPUTS
+    High CPU and Memory Alerts would be applied on the mentioned resources.
+
+    .Note 
+    All the modules should be updated in the automation account.
+    
+#>
+
+param
+(
+    [Parameter(Mandatory=$true,
+    Position=1,
+    HelpMessage=" Provide the name of workspace")]
+    $WorkspaceName,
+    [Parameter(Mandatory=$true,
+    Position=2,
+    HelpMessage=" Provide the name of the subscription on which you need to perform the operation")]
+    $SubscriptionName,
+    [Parameter(Mandatory=$true,
+    Position=3,
+    HelpMessage=" Provide the name of the action group to which the alert email needs to be sent.")]
+    $ActionGroupName
+)
+
+try
+{
+    $servicePrincipalConnection = Get-AutomationConnection -Name AzureRunAsConnection 
+
+    "Logging in to Azure..."
+    Add-AzureRmAccount `
+    -ServicePrincipal `
+    -TenantId $servicePrincipalConnection.TenantId `
+    -ApplicationId $servicePrincipalConnection.ApplicationId `
+    -CertificateThumbprint $servicePrincipalConnection.CertificateThumbprint | Out-Null
+
+    #Seleting and logging to selected subscription
+    Select-AzureRmSubscription -subscriptionName $SubscriptionName
+
+    #URI where the template is stored
+    $TemplateURI = "https://use2montoringtemplates01.blob.core.windows.net/oms-alert-template/OMSQueryAlertsV1.1.json"
+
+    $StorageAccountName = "use2montoringtemplates01"
+    $StorageInfo = Get-AzureRmStorageAccount | where{$_.StorageAccountName -eq "$StorageAccountName"}
+    if($StorageInfo -eq $null -or $StorageInfo -eq "")
+    {
+        throw "The storage account $StorageAccountName is not persent in the subscription. Please provide the correct storage account name."
+    }
+    else
+    {
+        $Keys = Get-AzureRmStorageAccountKey -ResourceGroupName $StorageInfo.ResourceGroupName -Name $StorageAccountName
+        $storageKey = $Keys.value[0]
+        $StorageContainer = "oms-alert-template"
+        $StartTime = Get-Date
+        $EndTime = (Get-Date).AddHours(4)
+
+        $StorageContext = New-AzureStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey 
+        $SASTokenURI = New-AzureStorageBlobSASToken -Container $StorageContainer -Blob "OMSQueryAlertsV1.1.json" -Permission rwd -Context $StorageContext -ExpiryTime $EndTime -StartTime $StartTime -FullUri
+    }
+
+    #Variable declarations
+    [System.Collections.ArrayList]$TestArray = @()
+
+    #Action Group
+    $ActionGroupInfo = Get-AzureRmActionGroup | where{$_.Name -eq "$ActionGroupName"}
+    if($ActionGroupInfo -eq $null -or $ActionGroupInfo -eq "")
+    {
+        throw "The Action Group $ActionGroupName is not persent in the subscription. Please provide the correct Action Group Name."
+    }
+    else
+    {
+        $ActionGroupID = $ActionGroupInfo.Id
+    }
+
+    #Getting the Workspace information on which the Alerts need to be raised.
+    $WorkSpaceInfo = Get-AzureRmOperationalInsightsWorkspace | where{$_.Name -eq "$WorkSpaceName"}
+    if($WorkSpaceInfo -eq $null)
+    {
+        Throw "The Workspace $WorkspaceName is not present in the subscription. Please provide the correct Workspace name."
+    }
+    else
+    {
+        $WorkSpaceLocation = $WorkSpaceInfo.Location
+        $WorkSpaceRG = $WorkSpaceInfo.ResourceGroupName
+    }
+
+    #Queries
+    $Memory = "Perf | where ( CounterName == `"% Used Memory`" or CounterName == `"% Committed Bytes In Use`" ) | where Computer contains (`"SHDWSFS`") | summarize AggregatedValue = avg(CounterValue) by Computer, bin(TimeGenerated, 1h) | where AggregatedValue > 95"
+	
+    $CPU = "Perf | where CounterName == `"% Processor Time`" | where ObjectName == `"Processor`" | where Computer contains (`"SHDWSFS`") | where ( InstanceName == `"_Total`" ) |summarize AggregatedValue = avg(CounterValue) by Computer, bin(TimeGenerated, 1h) | where AggregatedValue > 95”
+
+	
+    $TestArray += [pscustomobject]@{
+            WorkspaceName = "$WorkSpaceName"
+            searchname = "alert|USE2-SFS-WIN-MEMORY-WARNING"
+            alertname = "USE2-SFS-WIN-MEMORY-WARNING"
+            alertdescription = "This is to Alert that Memory Utilization is critical and needs attention.Please escalate this to DL `"Infra-CoreTeam-ActiveDirectory@PAREXEL.com`""
+            Severity = "informational"
+            Operator = "gt"
+            ThresholdValue = 0
+            GroupIds = "$ActionGroupID"
+            CustomEmailSubject = ""
+            SearchQuery = "$Memory"
+            SearchCategory = "Alert"
+            WorkspaceLocation = "$WorkSpaceLocation"
+            ScheduleName = "Schedule-USE2-SFS-WIN-MEM-WARNING"
+            Interval = 5
+            QueryTimeSpan = 60
+        }
+
+    $TestArray += [pscustomobject]@{
+            WorkspaceName = "$WorkSpaceName"
+            searchname = "alert|USE2-SFS-WIN-CPU-UTILIZATION-PERCENTAGE-CRITICAL"
+            alertname = "USE2-SFS-WIN-CPU-UTILIZATION-PERCENTAGE-CRITICAL"
+            alertdescription = "This is to Alert that CPU Utilization is critical and needs attention. Please escalate this to DL `"Infra-CoreTeam-ActiveDirectory@PAREXEL.com`""
+            Severity = "warning"
+            Operator = "gt"
+            ThresholdValue = 0
+            GroupIds = "$ActionGroupID"
+            CustomEmailSubject = ""
+            SearchQuery = "$CPU"
+            SearchCategory = "Alert"
+            WorkspaceLocation = "$WorkSpaceLocation"
+            ScheduleName = "Sche-USE2-SFS-WIN-CPUUTI-PER-CRITICAL"
+            Interval = 5
+            QueryTimeSpan = 60
+        }
+
+    if($TestArray.Count -eq 1)
+    {
+        $JSONArray = $TestArray | ConvertTo-Json 
+            $Array = "[" +$JSONArray+ "]"
+        $paramobj = @{
+            "array" =[Newtonsoft.Json.JsonConvert]::DeserializeObject($Array)
+        }
+    }
+    else
+    {
+        $JSONArray = $TestArray | ConvertTo-Json
+        $paramobj = @{
+            "array" =[Newtonsoft.Json.JsonConvert]::DeserializeObject($JSONArray)
+        }
+    }
+
+    Test-AzureRmResourceGroupDeployment -ResourceGroupName "$WorkSpaceRG" -TemplateUri $SASTokenURI -TemplateParameterObject $paramobj -Mode Incremental
+
+    New-AzureRmResourceGroupDeployment -Name "SFS-CPU-Mem-Alerts" -ResourceGroupName "$WorkSpaceRG" -TemplateUri $SASTokenURI -TemplateParameterObject $paramobj -Mode Incremental
+}
+catch
+{
+    Write-Output $_.ToString()
+}

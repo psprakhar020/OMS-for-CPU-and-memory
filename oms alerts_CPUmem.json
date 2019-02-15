@@ -1,0 +1,87 @@
+{
+   "$schema":"http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+   "contentVersion":"1.0.0.0",
+   "parameters":{
+      "array":{
+         "type":"array"
+      }
+   },
+   "variables":{
+
+   },
+   "resources":[
+      {
+         "name":"[concat(parameters('array')[copyindex()].WorkspaceName, '/', parameters('array')[copyindex()].searchname)]",
+         "type":"Microsoft.OperationalInsights/workspaces/savedSearches",
+         "apiVersion":"2017-03-15-preview",
+         "location":"[parameters('array')[copyindex()].WorkspaceLocation]",
+         "copy":{
+            "name":"Loop1",
+            "count":"[length(parameters('array'))]"
+         },
+         "dependsOn":[
+
+         ],
+         "properties":{
+            "Category":"[parameters('array')[copyindex()].SearchCategory]",
+            "DisplayName":"[parameters('array')[copyindex()].alertname]",
+            "Query":"[parameters('array')[copyindex()].SearchQuery]",
+            "Version":"1"
+         }
+      },
+      {
+         "name":"[concat(parameters('array')[copyindex()].WorkspaceName, '/', parameters('array')[copyindex()].searchname, '/', parameters('array')[copyindex()].ScheduleName)]",
+         "type":"Microsoft.OperationalInsights/workspaces/savedSearches/schedules",
+         "apiVersion":"2017-03-15-preview",
+         "location":"[parameters('array')[copyindex()].WorkspaceLocation]",
+         "copy":{
+            "name":"Loop2",
+            "count":"[length(parameters('array'))]"
+         },
+         "dependsOn":[
+            "[resourceId('Microsoft.OperationalInsights/workspaces/savedSearches', parameters('array')[copyIndex()].WorkspaceName, parameters('array')[copyindex()].searchname)]"
+         ],
+         "properties":{
+	    "Interval":"[parameters('array')[copyindex()].Interval]",
+            "QueryTimeSpan":"[parameters('array')[copyindex()].QueryTimeSpan]",
+            "enabled":true
+         }
+      },
+      {
+         "name":"[concat(parameters('array')[copyindex()].WorkspaceName, '/', parameters('array')[copyindex()].searchname, '/', parameters('array')[copyindex()].ScheduleName, '/', parameters('array')[copyindex()].alertname)]",
+         "type":"Microsoft.OperationalInsights/workspaces/savedSearches/schedules/actions",
+         "apiVersion":"2017-03-15-preview",
+         "location":"[parameters('array')[copyindex()].WorkspaceLocation]",
+         "copy":{
+            "name":"Loop3",
+            "count":"[length(parameters('array'))]"
+         },
+         "dependsOn":[
+            "[resourceId('Microsoft.OperationalInsights/workspaces/savedSearches/schedules', parameters('array')[copyindex()].WorkspaceName, parameters('array')[copyindex()].searchname, parameters('array')[copyindex()].ScheduleName)]"
+         ],
+         "properties":{
+            "etag":"*",
+            "Type":"Alert",
+            "Name":"[parameters('array')[copyindex()].alertname]",
+            "Description":"[parameters('array')[copyindex()].alertdescription]",
+            "Severity":"[parameters('array')[copyindex()].Severity]",
+            "Threshold":{
+               "Operator":"[parameters('array')[copyindex()].Operator]",
+               "Value":"[parameters('array')[copyindex()].ThresholdValue]"
+            },
+            "Throttling":{
+               "DurationInMinutes":60
+            },
+            "AzNsNotification":{
+               "GroupIds":[
+                  "[parameters('array')[copyindex()].GroupIds]"
+               ],
+               "CustomEmailSubject":"[parameters('array')[copyindex()].CustomEmailSubject]"
+            }
+         }
+      }
+   ],
+   "outputs":{
+
+   }
+}
